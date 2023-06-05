@@ -1,6 +1,8 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Microsoft.OpenApi.Models;
 using MinimalAPI.Data;
 using MinimalAPI.Models;
 using MiniValidation;
@@ -10,10 +12,41 @@ using NetDevPack.Identity.Model;
 
 var builder = WebApplication.CreateBuilder(args);
 
+#region Configure Services
 
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
-
+builder.Services.AddSwaggerGen(c => {
+    c.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "Minimal API",
+        Description = "Developed by Rafael Etiene",
+        Contact = new OpenApiContact { Name = "Rafael Etiene", Email = "rafaellimaetiene@gmail.com" }
+    });
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Description = "Insira o token JWT desta maneira: Bearer {seu token}",
+        Name = "Authorization",
+        Scheme = "Bearer",
+        BearerFormat = "JWT",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.ApiKey
+    });
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            new string[] {}
+        }
+    });
+});
+    
 builder.Services.AddDbContext<MinimalContextDb>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"))
 );
@@ -25,8 +58,17 @@ builder.Services.AddIdentityEntityFrameworkContextConfiguration(options =>
 builder.Services.AddIdentityConfiguration();
 builder.Services.AddJwtConfiguration(builder.Configuration, "AppSettings");
 
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("ExcluirFornecedor", policy => policy.RequireClaim("ExcluirFornecedor"));
+});
+
 
 var app = builder.Build();
+
+#endregion
+
+#region Configure pipeline
 
 if (app.Environment.IsDevelopment())
 {
@@ -37,7 +79,7 @@ if (app.Environment.IsDevelopment())
 app.UseAuthConfiguration();
 app.UseHttpsRedirection();
 
-app.MapPost("/registro", async (
+app.MapPost("/registro", [AllowAnonymous] async (
         SignInManager<IdentityUser> signInManager,
         UserManager<IdentityUser> userManager,
         IOptions<AppJwtSettings> appJwtSettings,
@@ -78,7 +120,7 @@ app.MapPost("/registro", async (
     .WithTags("Usuario");
 
 
-app.MapPost("/login", async (
+app.MapPost("/login", [AllowAnonymous] async (
         SignInManager<IdentityUser> signInManager,
         UserManager<IdentityUser> userManager,
         IOptions<AppJwtSettings> appJwtSettings,
@@ -111,14 +153,14 @@ app.MapPost("/login", async (
 
 
 
-app.MapGet("/fornecedor", async (
+app.MapGet("/fornecedor", [AllowAnonymous] async (
     MinimalContextDb context) =>
     await context.Fornecedores.ToListAsync())
 .WithName("GetFornecedor")
 .WithTags("Fornecedor");
 
 
-app.MapGet("/fornecedor/{id}", async (
+app.MapGet("/fornecedor/{id}", [AllowAnonymous] async (
     Guid id,
     MinimalContextDb context) =>
     await context.Fornecedores.FindAsync(id)
@@ -130,7 +172,7 @@ app.MapGet("/fornecedor/{id}", async (
 .WithTags("Fornecedor");
 
 
-app.MapPost("fornecedor", async (MinimalContextDb context, Fornecedor fornecedor) =>
+app.MapPost("fornecedor", [Authorize] async (MinimalContextDb context, Fornecedor fornecedor) =>
 {
     if (!MiniValidator.TryValidate(fornecedor, out var errors))
         return Results.ValidationProblem(errors);
@@ -147,7 +189,7 @@ app.MapPost("fornecedor", async (MinimalContextDb context, Fornecedor fornecedor
 .WithTags("Fornecedor");
 
 
-app.MapPut("/fornecedor/{id}", async (Guid id, Fornecedor fornecedor, MinimalContextDb context) =>
+app.MapPut("/fornecedor/{id}", [Authorize] async (Guid id, Fornecedor fornecedor, MinimalContextDb context) =>
 {
     var fornecedorBanco = await context.Fornecedores.FindAsync(id);
     if (fornecedorBanco == null) return Results.NotFound();
@@ -166,7 +208,7 @@ app.MapPut("/fornecedor/{id}", async (Guid id, Fornecedor fornecedor, MinimalCon
 .WithTags("Fornecedor");
 
 
-app.MapDelete("fornecedor/{id}", async (MinimalContextDb context, Guid id) =>
+app.MapDelete("fornecedor/{id}", [Authorize] async (MinimalContextDb context, Guid id) =>
 {
     var fornecedor = await context.Fornecedores.FindAsync(id);
     if (fornecedor == null) return Results.NotFound();
@@ -178,7 +220,10 @@ app.MapDelete("fornecedor/{id}", async (MinimalContextDb context, Guid id) =>
 })
 .Produces<Fornecedor>(StatusCodes.Status204NoContent)
 .Produces<Fornecedor>(StatusCodes.Status400BadRequest)
+.RequireAuthorization("ExcluirFornecedor")
 .WithName("DeleteFornecedor")
 .WithTags("Fornecedor");
 
 app.Run();
+
+#endregion
